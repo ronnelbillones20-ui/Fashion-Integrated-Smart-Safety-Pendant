@@ -620,7 +620,7 @@
     initMap();
 
     if (!state.contacts.length) {
-      logActivity('Welcome to Aurelia — add your first guardian to get started', 'sparkles');
+      logActivity('Welcome to Tracelet — add your first guardian to get started', 'sparkles');
     }
   }
 
