@@ -18,7 +18,7 @@
   };
 
   const DEFAULT_SETTINGS = {
-    name: 'Aria',
+    name: 'Juan',
     deviceName: 'Tracelet Pendant',
     battery: 87,
     autoShare: true,
