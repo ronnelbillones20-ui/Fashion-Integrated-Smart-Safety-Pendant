@@ -507,7 +507,7 @@
       desc: 'A matte black ceramic disc that doubles as a discreet long-press emergency button.' },
     { name: 'Lumière Brooch', style: 'Vintage Brooch', image: 'assets/catalog/catalog-3.png',
       desc: 'An art-deco inspired brooch with the alert module concealed behind a rotating petal clasp.' },
-    { name: 'Aria Bracelet Charm', style: 'Layered Bracelet', image: 'assets/catalog/catalog-4.png',
+    { name: 'Bracelet Charm', style: 'Layered Bracelet', image: 'assets/catalog/catalog-4.png',
       desc: 'A small charm that clips onto any bracelet stack, vibrating discreetly when an alert is sent.' },
     { name: 'Solstice Keychain', style: 'Everyday Carry', image: 'assets/catalog/catalog-5.png',
       desc: 'A pocket-friendly variant for those who prefer carrying their safety device rather than wearing it.' },
