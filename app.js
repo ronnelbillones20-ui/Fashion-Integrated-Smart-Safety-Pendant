@@ -543,7 +543,7 @@
   function initSettingsUI() {
     document.getElementById('settingsForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      state.settings.name = document.getElementById('settingName').value.trim() || 'Aria';
+      state.settings.name = document.getElementById('settingName').value.trim() || 'Juam';
       state.settings.deviceName = document.getElementById('settingDeviceName').value.trim() || 'Tracelet Pendant';
       state.settings.autoShare = document.getElementById('settingAutoShare').checked;
       state.settings.sound = document.getElementById('settingSound').checked;
