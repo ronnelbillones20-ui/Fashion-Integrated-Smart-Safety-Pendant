@@ -19,7 +19,7 @@
 
   const DEFAULT_SETTINGS = {
     name: 'Aria',
-    deviceName: 'Aurelia Pendant',
+    deviceName: 'Tracelet Pendant',
     battery: 87,
     autoShare: true,
     sound: true
@@ -175,7 +175,7 @@
   ---------------------------------------------------- */
   function renderDashboardInfo() {
     document.getElementById('welcomeName').textContent = `Hello, ${state.settings.name || 'there'}`;
-    document.getElementById('deviceNameLabel').textContent = state.settings.deviceName || 'Aurelia Pendant';
+    document.getElementById('deviceNameLabel').textContent = state.settings.deviceName || 'Tracelet Pendant';
     document.getElementById('batteryPercentLabel').textContent = `${state.settings.battery}%`;
     document.getElementById('batteryFillBar').style.width = `${state.settings.battery}%`;
     document.getElementById('contactsCountLabel').textContent = `${state.contacts.length} saved`;
@@ -544,7 +544,7 @@
     document.getElementById('settingsForm').addEventListener('submit', (e) => {
       e.preventDefault();
       state.settings.name = document.getElementById('settingName').value.trim() || 'Aria';
-      state.settings.deviceName = document.getElementById('settingDeviceName').value.trim() || 'Aurelia Pendant';
+      state.settings.deviceName = document.getElementById('settingDeviceName').value.trim() || 'Tracelet Pendant';
       state.settings.autoShare = document.getElementById('settingAutoShare').checked;
       state.settings.sound = document.getElementById('settingSound').checked;
       saveJSON(STORAGE_KEYS.SETTINGS, state.settings);
