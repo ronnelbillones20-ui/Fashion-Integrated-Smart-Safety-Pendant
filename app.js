@@ -206,16 +206,24 @@
   ---------------------------------------------------- */
   const TILE_SOURCES = [
     {
-      // Dark style that matches the night theme (no API key required)
-      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      // Primary: Esri World Dark Gray canvas (dark, matches the night theme, no API key)
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
       options: {
-        subdomains: 'abcd',
+        maxNativeZoom: 16, // tiles stop at 16; Leaflet upscales beyond that
         maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
+        attribution: 'Tiles &copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> &mdash; Esri, DeLorme, NAVTEQ'
       }
     },
     {
-      // Fallback: standard OpenStreetMap tiles (no API key required)
+      // Fallback 1: Esri World Street Map (detailed, light, no API key)
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      options: {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> &mdash; Esri, DeLorme, NAVTEQ'
+      }
+    },
+    {
+      // Fallback 2: standard OpenStreetMap tiles (no API key required)
       url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       options: {
         maxZoom: 19,
