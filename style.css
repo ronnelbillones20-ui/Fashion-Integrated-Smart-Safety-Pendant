@@ -1,426 +1,760 @@
 /* =========================================================
-   AURELIA — Custom Styles
-   Glassmorphism / "Nature-at-Night" luxury tech-fashion theme
+   TRACELET — Smart Safety Pendant Companion App
+   Pure client-side logic. No backend. Everything persists
+   to localStorage so it survives a page refresh.
    ========================================================= */
 
-:root {
-  --night-950: #06080d;
-  --night-900: #0a0e17;
-  --gold-400: #e8c987;
-  --gold-500: #d4af6a;
-  --rose-glow: rgba(244, 63, 94, 0.45);
-}
+(() => {
+  'use strict';
 
-html, body {
-  background: var(--night-950);
-  scroll-behavior: smooth;
-}
+  /* ----------------------------------------------------
+     STORAGE KEYS & DEFAULTS
+  ---------------------------------------------------- */
+  const STORAGE_KEYS = {
+    CONTACTS: 'tracelet_contacts',
+    SETTINGS: 'tracelet_settings',
+    ACTIVITY: 'tracelet_activity',
+    LOCATION: 'tracelet_last_location'
+  };
 
-/* ---------- Ambient background scene ---------- */
-.bg-scene {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  background: radial-gradient(ellipse at top, #0c1322 0%, #06080d 60%);
-}
+  // Old keys from the "aurelia" version — migrated automatically so no data is lost.
+  const LEGACY_KEYS = {
+    CONTACTS: 'aurelia_contacts',
+    SETTINGS: 'aurelia_settings',
+    ACTIVITY: 'aurelia_activity',
+    LOCATION: 'aurelia_last_location'
+  };
 
-.bg-aurora {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.35;
-  animation: drift 22s ease-in-out infinite alternate;
-}
-.bg-aurora-1 {
-  width: 50vw; height: 50vw;
-  top: -10%; left: -10%;
-  background: radial-gradient(circle, #2d4a6e, transparent 70%);
-}
-.bg-aurora-2 {
-  width: 45vw; height: 45vw;
-  bottom: -15%; right: -10%;
-  background: radial-gradient(circle, #6e4f2d, transparent 70%);
-  animation-delay: 4s;
-}
-@keyframes drift {
-  0%   { transform: translate(0,0) scale(1); }
-  100% { transform: translate(4%, 6%) scale(1.1); }
-}
+  const DEFAULT_SETTINGS = {
+    name: 'Juan',
+    deviceName: 'Tracelet Pendant',
+    battery: 87,
+    autoShare: true,
+    sound: true
+  };
 
-.bg-stars {
-  position: absolute;
-  inset: 0;
-  background-image:
-    radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.5) 0, transparent 100%),
-    radial-gradient(1px 1px at 70% 60%, rgba(255,255,255,0.4) 0, transparent 100%),
-    radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.3) 0, transparent 100%),
-    radial-gradient(1px 1px at 90% 15%, rgba(255,255,255,0.4) 0, transparent 100%),
-    radial-gradient(1px 1px at 55% 45%, rgba(255,255,255,0.3) 0, transparent 100%);
-  background-repeat: repeat;
-  background-size: 600px 600px;
-  opacity: 0.6;
-}
+  // Starting mock coordinates (Manila, PH) — used if real GPS is unavailable.
+  const MOCK_ORIGIN = { lat: 14.5547, lng: 121.0244 };
 
-/* ---------- Glass primitives ---------- */
-.glass-card {
-  background: linear-gradient(145deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 1.25rem;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
-  transition: transform 0.25s ease, border-color 0.25s ease;
-}
-.glass-card:hover {
-  border-color: rgba(232, 201, 135, 0.18);
-}
+  /* ----------------------------------------------------
+     UTILITIES
+  ---------------------------------------------------- */
+  function loadJSON(key, fallback, legacyKey = null) {
+    try {
+      let raw = localStorage.getItem(key);
+      if (!raw && legacyKey) raw = localStorage.getItem(legacyKey);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+      console.warn('Failed to parse localStorage key', key, e);
+      return fallback;
+    }
+  }
 
-.glass-pill {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.07);
-  backdrop-filter: blur(14px);
-}
+  function saveJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.error('Failed to save to localStorage', e);
+    }
+  }
 
-.glass-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: #e2e8f0;
-  transition: all 0.2s ease;
-}
-.glass-btn:hover { background: rgba(255,255,255,0.1); }
+  function uid() {
+    return 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
 
-.glass-btn-light {
-  background: rgba(255,255,255,0.12);
-  border: 1px solid rgba(255,255,255,0.25);
-  color: #fff;
-  transition: all 0.2s ease;
-}
-.glass-btn-light:hover { background: rgba(255,255,255,0.22); }
+  function formatTime(date = new Date()) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
 
-.glass-btn-gold {
-  background: linear-gradient(135deg, var(--gold-400), var(--gold-500));
-  color: #1a1208;
-  border: 1px solid rgba(232,201,135,0.5);
-  box-shadow: 0 6px 20px rgba(212,175,106,0.25);
-  transition: all 0.2s ease;
-}
-.glass-btn-gold:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  function escapeHtml(str = '') {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
 
-/* ---------- Nav tabs ---------- */
-.nav-tab {
-  padding: 0.5rem 1.1rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #94a3b8;
-  transition: all 0.2s ease;
-}
-.nav-tab:hover { color: #e2e8f0; }
-.nav-tab.active {
-  background: linear-gradient(135deg, rgba(232,201,135,0.18), rgba(232,201,135,0.05));
-  color: #e8c987;
-}
+  function initials(name = '?') {
+    return name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+  }
 
-.nav-tab-mobile {
-  text-align: left;
-  padding: 0.65rem 1rem;
-  border-radius: 0.75rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #94a3b8;
-  background: rgba(255,255,255,0.03);
-}
-.nav-tab-mobile.active {
-  color: #e8c987;
-  background: rgba(232,201,135,0.1);
-}
+  function refreshIcons() {
+    if (window.lucide) lucide.createIcons();
+  }
 
-/* ---------- Icon chip ---------- */
-.icon-chip {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(232,201,135,0.1);
-  color: #e8c987;
-}
+  /* ----------------------------------------------------
+     STATE
+  ---------------------------------------------------- */
+  const state = {
+    settings: { ...DEFAULT_SETTINGS, ...loadJSON(STORAGE_KEYS.SETTINGS, {}, LEGACY_KEYS.SETTINGS) },
+    contacts: loadJSON(STORAGE_KEYS.CONTACTS, [], LEGACY_KEYS.CONTACTS),
+    activity: loadJSON(STORAGE_KEYS.ACTIVITY, [], LEGACY_KEYS.ACTIVITY),
+    currentLocation: loadJSON(STORAGE_KEYS.LOCATION, MOCK_ORIGIN, LEGACY_KEYS.LOCATION),
+    map: null,
+    marker: null,
+    accuracyCircle: null,
+    sosActive: false,
+    simInterval: null
+  };
 
-/* ---------- Battery ---------- */
-.battery-track {
-  width: 100%;
-  height: 8px;
-  border-radius: 9999px;
-  background: rgba(255,255,255,0.08);
-  overflow: hidden;
-}
-.battery-fill {
-  height: 100%;
-  border-radius: 9999px;
-  background: linear-gradient(90deg, #34d399, #e8c987);
-  transition: width 0.6s ease;
-}
+  /* ----------------------------------------------------
+     TOAST NOTIFICATIONS
+  ---------------------------------------------------- */
+  function toast(message, type = 'info', icon = 'info') {
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 mt-0.5 flex-shrink-0"></i><span>${escapeHtml(message)}</span>`;
+    container.appendChild(el);
+    refreshIcons();
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateX(20px)';
+      el.style.transition = 'all 0.3s ease';
+      setTimeout(() => el.remove(), 300);
+    }, 3800);
+  }
 
-/* ---------- Pulse dot ---------- */
-.pulse-dot {
-  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
-  animation: pulseDot 2s infinite;
-}
-@keyframes pulseDot {
-  0% { box-shadow: 0 0 0 0 rgba(52,211,153,0.6); }
-  70% { box-shadow: 0 0 0 6px rgba(52,211,153,0); }
-  100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
-}
+  /* ----------------------------------------------------
+     ACTIVITY LOG
+  ---------------------------------------------------- */
+  function logActivity(text, icon = 'circle') {
+    state.activity.unshift({ text, icon, time: formatTime() });
+    state.activity = state.activity.slice(0, 8);
+    saveJSON(STORAGE_KEYS.ACTIVITY, state.activity);
+    renderActivity();
+  }
 
-/* ---------- SOS Button ---------- */
-.sos-button {
-  position: relative;
-  width: 9rem;
-  height: 9rem;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  background: radial-gradient(circle at 30% 30%, #f43f5e, #9f1239);
-  border: 3px solid rgba(255,255,255,0.25);
-  box-shadow: 0 0 0 0 rgba(244,63,94,0.5), 0 10px 30px rgba(244,63,94,0.3);
-  cursor: pointer;
-  transition: transform 0.15s ease;
-  animation: sosBreathe 3s ease-in-out infinite;
-}
-.sos-button:hover { transform: scale(1.04); }
-.sos-button:active { transform: scale(0.97); }
-@keyframes sosBreathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(244,63,94,0.45), 0 10px 30px rgba(244,63,94,0.3); }
-  50% { box-shadow: 0 0 0 14px rgba(244,63,94,0), 0 10px 30px rgba(244,63,94,0.3); }
-}
-.sos-button-ring {
-  position: absolute;
-  inset: -10px;
-  border-radius: 50%;
-  border: 1px dashed rgba(244,63,94,0.4);
-  animation: spin 18s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+  function renderActivity() {
+    const list = document.getElementById('activityLog');
+    if (!state.activity.length) {
+      list.innerHTML = '<li class="activity-empty">No recent activity yet — your timeline will appear here.</li>';
+      return;
+    }
+    list.innerHTML = state.activity.map(item => `
+      <li class="flex items-center gap-2.5">
+        <i data-lucide="${escapeHtml(item.icon)}" class="w-3.5 h-3.5 text-gold-400 flex-shrink-0"></i>
+        <span class="flex-1">${escapeHtml(item.text)}</span>
+        <span class="text-xs text-slate-500">${escapeHtml(item.time)}</span>
+      </li>
+    `).join('');
+    refreshIcons();
+  }
 
-/* ---------- Quick actions ---------- */
-.quick-action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 1rem 0.5rem;
-  border-radius: 1rem;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.07);
-  color: #cbd5e1;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-align: center;
-  transition: all 0.2s ease;
-}
-.quick-action:hover {
-  background: rgba(232,201,135,0.1);
-  border-color: rgba(232,201,135,0.25);
-  color: #e8c987;
-  transform: translateY(-2px);
-}
+  /* ----------------------------------------------------
+     TAB NAVIGATION
+  ---------------------------------------------------- */
+  function initTabs() {
+    document.querySelectorAll('[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+    document.getElementById('mobileMenuBtn').addEventListener('click', () => {
+      document.getElementById('mobileNav').classList.toggle('hidden');
+    });
+  }
 
-.activity-empty { opacity: 0.6; font-style: italic; }
+  function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+      panel.classList.toggle('hidden', panel.id !== `tab-${name}`);
+    });
+    document.querySelectorAll('.nav-tab, .nav-tab-mobile').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === name);
+    });
+    document.getElementById('mobileNav').classList.add('hidden');
 
-/* ---------- Map ---------- */
-.map-container {
-  width: 100%;
-  height: 480px;
-  border-radius: 1rem;
-  overflow: hidden;
-  filter: saturate(0.85) brightness(0.95);
-}
-.leaflet-container { background: #0a0e17 !important; }
+    // Leaflet needs a resize nudge when its container becomes visible.
+    if (name === 'map' && state.map) {
+      setTimeout(() => state.map.invalidateSize(), 80);
+    }
+  }
 
-/* ---------- Forms ---------- */
-.form-label {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #94a3b8;
-  margin-bottom: 0.4rem;
-}
-.form-input {
-  width: 100%;
-  padding: 0.65rem 0.9rem;
-  border-radius: 0.65rem;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: #f1f5f9;
-  outline: none;
-  transition: border-color 0.2s ease;
-}
-.form-input::placeholder { color: #64748b; }
-.form-input:focus { border-color: #e8c987; }
+  /* ----------------------------------------------------
+     CLOCK
+  ---------------------------------------------------- */
+  function startClock() {
+    const el = document.getElementById('liveClock');
+    function tick() {
+      const now = new Date();
+      el.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) + ' · ' + formatTime(now);
+    }
+    tick();
+    setInterval(tick, 30000);
+  }
 
-.glass-toggle-row {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 0.75rem;
-  padding: 0.85rem 1rem;
-}
+  /* ----------------------------------------------------
+     DASHBOARD / DEVICE INFO
+  ---------------------------------------------------- */
+  function renderDashboardInfo() {
+    document.getElementById('welcomeName').textContent = `Hello, ${state.settings.name || 'there'}`;
+    document.getElementById('deviceNameLabel').textContent = state.settings.deviceName || 'Tracelet Pendant';
+    document.getElementById('batteryPercentLabel').textContent = `${state.settings.battery}%`;
+    document.getElementById('batteryFillBar').style.width = `${state.settings.battery}%`;
+    document.getElementById('contactsCountLabel').textContent = `${state.contacts.length} saved`;
+  }
 
-/* Toggle switch */
-.switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-  position: absolute; cursor: pointer; inset: 0;
-  background: rgba(255,255,255,0.15);
-  border-radius: 9999px;
-  transition: 0.3s;
-}
-.slider::before {
-  content: ""; position: absolute; height: 18px; width: 18px;
-  left: 3px; bottom: 3px;
-  background: white; border-radius: 50%;
-  transition: 0.3s;
-}
-.switch input:checked + .slider { background: #d4af6a; }
-.switch input:checked + .slider::before { transform: translateX(20px); }
+  // Slowly drains the mock battery over time, just for realism.
+  function simulateBatteryDrain() {
+    setInterval(() => {
+      if (state.settings.battery > 5) {
+        state.settings.battery -= 1;
+        saveJSON(STORAGE_KEYS.SETTINGS, state.settings);
+        renderDashboardInfo();
+      }
+    }, 45000);
+  }
 
-/* ---------- Contact cards ---------- */
-.contact-card {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.contact-avatar {
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-family: 'Cormorant Garamond', serif;
-  font-size: 1.1rem;
-  color: #1a1208;
-  background: linear-gradient(135deg, #e8c987, #b8924f);
-  flex-shrink: 0;
-}
+  /* ----------------------------------------------------
+     GPS / MAP  (Leaflet + free CARTO dark tiles, OSM fallback)
+  ---------------------------------------------------- */
+  // OpenFreeMap vector style. Other styles: 'bright', 'positron' (swap the last word).
+  const OPENFREEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+  const OPENFREEMAP_ATTRIBUTION =
+    '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> ' +
+    '&copy; <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> ' +
+    'Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
 
-/* ---------- Catalog cards ---------- */
-.catalog-card {
-  position: relative;
-  overflow: hidden;
-}
-.catalog-image {
-  height: 12rem;
-  border-radius: 0.85rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 1rem;
-  overflow: hidden;
-  background: radial-gradient(circle at 50% 40%, rgba(232,201,135,0.10), rgba(0,0,0,0.4));
-}
+  const TILE_SOURCES = [
+    {
+      // Primary: Esri World Dark Gray canvas (dark, matches the night theme, no API key)
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+      options: {
+        maxNativeZoom: 16, // tiles stop at 16; Leaflet upscales beyond that
+        maxZoom: 19,
+        attribution: 'Tiles &copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> &mdash; Esri, DeLorme, NAVTEQ'
+      }
+    },
+    {
+      // Fallback 1: Esri World Street Map (detailed, light, no API key)
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      options: {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> &mdash; Esri, DeLorme, NAVTEQ'
+      }
+    },
+    {
+      // Fallback 2: standard OpenStreetMap tiles (no API key required)
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      options: {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+      }
+    }
+  ];
 
-.catalog-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5));
-  transition: transform 0.35s ease;
-}
-.catalog-card:hover .catalog-img { transform: scale(1.06); }
+  function initMap() {
+    if (!window.L) {
+      console.error('Leaflet failed to load — map disabled.');
+      toast('Map library could not be loaded. Check your connection.', 'danger', 'alert-triangle');
+      updateLocationDisplays();
+      return;
+    }
 
-/* ---------- Modal ---------- */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(6,8,13,0.75);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-}
-.modal-card {
-  width: 100%;
-  max-width: 28rem;
-  background: linear-gradient(160deg, rgba(20,26,40,0.95), rgba(10,14,23,0.97));
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 1.25rem;
-  padding: 1.75rem;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-  animation: modalIn 0.25s ease;
-}
-@keyframes modalIn {
-  from { opacity: 0; transform: translateY(10px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+    state.map = L.map('map', { zoomControl: true, attributionControl: false })
+      .setView([state.currentLocation.lat, state.currentLocation.lng], 15);
 
-/* ---------- SOS Overlay ---------- */
-.sos-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  background: radial-gradient(circle at center, rgba(159,18,57,0.55), rgba(6,8,13,0.97));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(4px);
-}
-.sos-pulse-ring {
-  position: absolute;
-  width: 200px; height: 200px;
-  border-radius: 50%;
-  border: 2px solid rgba(244,63,94,0.5);
-  animation: sosRing 2.4s ease-out infinite;
-}
-.sos-pulse-ring.delay-1 { animation-delay: 0.8s; }
-.sos-pulse-ring.delay-2 { animation-delay: 1.6s; }
-@keyframes sosRing {
-  0% { transform: scale(1); opacity: 0.8; }
-  100% { transform: scale(6); opacity: 0; }
-}
+    // Keep the required tile credits, drop the "Leaflet" prefix.
+    L.control.attribution({ prefix: false }).addTo(state.map);
 
-/* ---------- Toasts ---------- */
-.toast {
-  background: rgba(16,22,38,0.92);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-left: 3px solid #e8c987;
-  backdrop-filter: blur(12px);
-  border-radius: 0.75rem;
-  padding: 0.85rem 1rem;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-  color: #e2e8f0;
-  font-size: 0.875rem;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  animation: toastIn 0.25s ease;
-}
-.toast.success { border-left-color: #34d399; }
-.toast.danger { border-left-color: #f43f5e; }
-@keyframes toastIn {
-  from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
-}
+    // Raster fallback chain (Esri dark -> Esri street -> OSM), used only if
+    // OpenFreeMap or the MapLibre libraries fail to load.
+    let sourceIndex = 0;
+    let tileLayer = null;
+    const useSource = (i) => {
+      if (tileLayer) state.map.removeLayer(tileLayer);
+      tileLayer = L.tileLayer(TILE_SOURCES[i].url, TILE_SOURCES[i].options).addTo(state.map);
+      let errors = 0;
+      tileLayer.on('tileerror', () => {
+        errors++;
+        if (errors >= 5 && sourceIndex < TILE_SOURCES.length - 1) {
+          sourceIndex++;
+          useSource(sourceIndex);
+        }
+      });
+    };
 
-/* ---------- Tab transition ---------- */
-.tab-panel { animation: fadeUp 0.3s ease; }
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+    // Primary: OpenFreeMap vector tiles (free, no API key, no usage limits).
+    let glLayer = null;
+    const fallbackToRaster = (reason) => {
+      console.warn('OpenFreeMap unavailable, using raster tiles:', reason);
+      if (glLayer) {
+        state.map.removeLayer(glLayer);
+        glLayer = null;
+      }
+      useSource(sourceIndex);
+    };
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(232,201,135,0.25); border-radius: 9999px; }
+    if (window.maplibregl && L.maplibreGL) {
+      try {
+        glLayer = L.maplibreGL({
+          style: OPENFREEMAP_STYLE,
+          attribution: OPENFREEMAP_ATTRIBUTION
+        }).addTo(state.map);
+
+        const glMap = glLayer.getMaplibreMap();
+        let loaded = false;
+        let glErrors = 0;
+
+        glMap.once('load', () => { loaded = true; });
+        glMap.on('error', () => {
+          glErrors++;
+          if (glLayer && glErrors >= 5) fallbackToRaster('too many tile/style errors');
+        });
+        // If the style never finishes loading, switch to the raster fallback.
+        setTimeout(() => {
+          if (!loaded && glLayer) fallbackToRaster('style load timeout');
+        }, 10000);
+      } catch (err) {
+        fallbackToRaster(err);
+      }
+    } else {
+      fallbackToRaster('MapLibre scripts not loaded');
+    }
+
+    const goldIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:18px;height:18px;border-radius:50%;background:#e8c987;border:3px solid #fff;box-shadow:0 0 12px rgba(232,201,135,0.8)"></div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9]
+    });
+
+    state.marker = L.marker([state.currentLocation.lat, state.currentLocation.lng], { icon: goldIcon }).addTo(state.map);
+    state.accuracyCircle = L.circle([state.currentLocation.lat, state.currentLocation.lng], {
+      radius: 60,
+      color: '#e8c987',
+      weight: 1,
+      fillColor: '#e8c987',
+      fillOpacity: 0.08
+    }).addTo(state.map);
+
+    updateLocationDisplays();
+  }
+
+  function setLocation(lat, lng, persist = true) {
+    state.currentLocation = { lat, lng };
+    if (persist) saveJSON(STORAGE_KEYS.LOCATION, state.currentLocation);
+
+    if (state.map && state.marker) {
+      state.marker.setLatLng([lat, lng]);
+      state.accuracyCircle.setLatLng([lat, lng]);
+      state.map.panTo([lat, lng]);
+    }
+    updateLocationDisplays();
+  }
+
+  function updateLocationDisplays() {
+    const { lat, lng } = state.currentLocation;
+    const latStr = lat.toFixed(5);
+    const lngStr = lng.toFixed(5);
+    document.getElementById('latValue').textContent = latStr;
+    document.getElementById('lngValue').textContent = lngStr;
+    document.getElementById('lastUpdatedValue').textContent = formatTime();
+    document.getElementById('locationLabel').textContent = `${latStr}, ${lngStr}`;
+  }
+
+  function useRealGps() {
+    if (!('geolocation' in navigator)) {
+      toast('Geolocation is not supported on this device. Using simulated location instead.', 'danger', 'alert-triangle');
+      return;
+    }
+    toast('Requesting device location permission…', 'info', 'locate-fixed');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation(pos.coords.latitude, pos.coords.longitude);
+        const accuracy = Math.round(pos.coords.accuracy);
+        document.getElementById('gpsAccuracyLabel').textContent = `±${accuracy}m`;
+        if (state.accuracyCircle) state.accuracyCircle.setRadius(pos.coords.accuracy);
+        if (state.map) state.map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        toast('Live GPS location acquired.', 'success', 'check-circle-2');
+        logActivity('Switched to real device GPS', 'locate-fixed');
+      },
+      (err) => {
+        toast('Could not access real GPS (' + err.message + '). Falling back to simulation.', 'danger', 'alert-triangle');
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }
+
+  // Randomly "wanders" the pendant's position a little, to simulate movement
+  // when no real device / GPS hardware is connected.
+  function simulateMovement() {
+    if (state.simInterval) {
+      clearInterval(state.simInterval);
+      state.simInterval = null;
+      toast('Movement simulation stopped.', 'info', 'pause');
+      return;
+    }
+    toast('Simulating live pendant movement…', 'info', 'shuffle');
+    state.simInterval = setInterval(() => {
+      const jitterLat = (Math.random() - 0.5) * 0.0015;
+      const jitterLng = (Math.random() - 0.5) * 0.0015;
+      setLocation(state.currentLocation.lat + jitterLat, state.currentLocation.lng + jitterLng);
+    }, 2000);
+  }
+
+  /* ----------------------------------------------------
+     SOS / EMERGENCY ALERT SYSTEM
+  ---------------------------------------------------- */
+  function triggerSos() {
+    if (state.sosActive) return;
+    state.sosActive = true;
+
+    const overlay = document.getElementById('sosOverlay');
+    overlay.classList.remove('hidden');
+    document.getElementById('sosStatusText').textContent = 'Dispatching alert to emergency contacts…';
+    document.getElementById('sosCoordsText').textContent = 'Acquiring precise location…';
+
+    if (state.settings.sound) playAlertTone();
+    logActivity('SOS triggered', 'shield-alert');
+
+    const finishDispatch = (lat, lng) => {
+      if (!state.sosActive) return; // cancelled while locating
+      setLocation(lat, lng);
+      const coordText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      document.getElementById('sosCoordsText').textContent = `Coordinates: ${coordText}`;
+      dispatchMockAlerts(coordText);
+    };
+
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => finishDispatch(pos.coords.latitude, pos.coords.longitude),
+        () => finishDispatch(state.currentLocation.lat, state.currentLocation.lng),
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    } else {
+      finishDispatch(state.currentLocation.lat, state.currentLocation.lng);
+    }
+  }
+
+  function dispatchMockAlerts(coordText) {
+    const statusEl = document.getElementById('sosStatusText');
+
+    if (!state.contacts.length) {
+      statusEl.textContent = 'No emergency contacts saved — add a guardian to enable alerts.';
+      toast('SOS active, but you have no saved emergency contacts.', 'danger', 'user-x');
+      return;
+    }
+
+    const mapsLink = `https://maps.google.com/?q=${encodeURIComponent(coordText.replace(/\s/g, ''))}`;
+    let i = 0;
+    const sendNext = () => {
+      if (!state.sosActive) return; // stop if the alert was cancelled
+      if (i >= state.contacts.length) {
+        statusEl.textContent = `Alert sent to all ${state.contacts.length} guardian(s) with your live coordinates.`;
+        return;
+      }
+      const contact = state.contacts[i];
+      const message = `SOS ALERT from ${state.settings.name}: I may be in danger. My current location is ${coordText}. ${mapsLink}`;
+      statusEl.textContent = `Sending to ${contact.name} (${contact.phone})…`;
+      setTimeout(() => {
+        if (!state.sosActive) return;
+        logActivity(`Mock alert sent to ${contact.name}`, 'send');
+        console.log('[MOCK SMS DISPATCH]', { to: contact.phone, message });
+        i++;
+        sendNext();
+      }, 700);
+    };
+    sendNext();
+  }
+
+  function cancelSos() {
+    state.sosActive = false;
+    document.getElementById('sosOverlay').classList.add('hidden');
+    toast('SOS alert cancelled.', 'info', 'shield-off');
+    logActivity('SOS alert cancelled', 'shield-off');
+  }
+
+  // Plays a short synthesized alert tone using the Web Audio API — no asset files needed.
+  function playAlertTone() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [880, 660, 880].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.value = 0.15;
+        osc.connect(gain).connect(ctx.destination);
+        const start = ctx.currentTime + idx * 0.28;
+        osc.start(start);
+        osc.stop(start + 0.22);
+      });
+    } catch (e) {
+      console.warn('Audio alert unavailable', e);
+    }
+  }
+
+  /* ----------------------------------------------------
+     EMERGENCY CONTACTS (CRUD via localStorage)
+  ---------------------------------------------------- */
+  function renderContacts() {
+    const grid = document.getElementById('contactsGrid');
+    const empty = document.getElementById('contactsEmptyState');
+
+    if (!state.contacts.length) {
+      grid.innerHTML = '';
+      empty.classList.remove('hidden');
+      document.getElementById('contactsCountLabel').textContent = '0 saved';
+      return;
+    }
+    empty.classList.add('hidden');
+    document.getElementById('contactsCountLabel').textContent = `${state.contacts.length} saved`;
+
+    grid.innerHTML = state.contacts.map(c => `
+      <div class="glass-card p-5 contact-card" data-id="${escapeHtml(c.id)}">
+        <div class="flex items-start gap-3">
+          <div class="contact-avatar">${escapeHtml(initials(c.name))}</div>
+          <div>
+            <p class="font-semibold text-white">${escapeHtml(c.name)}</p>
+            <p class="text-sm text-slate-400">${escapeHtml(c.phone)}</p>
+            ${c.relation ? `<span class="inline-block mt-1.5 text-[10px] uppercase tracking-wide text-gold-400 bg-gold-400/10 px-2 py-0.5 rounded-full">${escapeHtml(c.relation)}</span>` : ''}
+          </div>
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center edit-contact-btn" data-id="${escapeHtml(c.id)}" title="Edit">
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+          </button>
+          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center delete-contact-btn" data-id="${escapeHtml(c.id)}" title="Remove">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i>
+          </button>
+        </div>
+      </div>
+    `).join('');
+
+    refreshIcons();
+
+    grid.querySelectorAll('.edit-contact-btn').forEach(btn =>
+      btn.addEventListener('click', () => openContactModal(btn.dataset.id))
+    );
+    grid.querySelectorAll('.delete-contact-btn').forEach(btn =>
+      btn.addEventListener('click', () => deleteContact(btn.dataset.id))
+    );
+  }
+
+  function openContactModal(id = null) {
+    const modal = document.getElementById('contactModal');
+    const title = document.getElementById('contactModalTitle');
+    const form = document.getElementById('contactForm');
+    form.reset();
+
+    if (id) {
+      const contact = state.contacts.find(c => c.id === id);
+      if (!contact) return;
+      title.textContent = 'Edit Guardian';
+      document.getElementById('contactId').value = contact.id;
+      document.getElementById('contactName').value = contact.name;
+      document.getElementById('contactPhone').value = contact.phone;
+      document.getElementById('contactRelation').value = contact.relation || '';
+    } else {
+      title.textContent = 'Add Guardian';
+      document.getElementById('contactId').value = '';
+    }
+
+    modal.classList.remove('hidden');
+  }
+
+  function closeContactModal() {
+    document.getElementById('contactModal').classList.add('hidden');
+  }
+
+  function saveContactFromForm(e) {
+    e.preventDefault();
+    const id = document.getElementById('contactId').value;
+    const name = document.getElementById('contactName').value.trim();
+    const phone = document.getElementById('contactPhone').value.trim();
+    const relation = document.getElementById('contactRelation').value.trim();
+
+    if (!name || !phone) {
+      toast('Name and phone number are required.', 'danger', 'alert-triangle');
+      return;
+    }
+
+    if (id) {
+      const contact = state.contacts.find(c => c.id === id);
+      if (!contact) return;
+      Object.assign(contact, { name, phone, relation });
+      toast(`Updated ${name}.`, 'success', 'check-circle-2');
+      logActivity(`Updated guardian ${name}`, 'pencil');
+    } else {
+      state.contacts.push({ id: uid(), name, phone, relation });
+      toast(`${name} added as a guardian.`, 'success', 'user-plus');
+      logActivity(`Added guardian ${name}`, 'user-plus');
+    }
+
+    saveJSON(STORAGE_KEYS.CONTACTS, state.contacts);
+    renderContacts();
+    renderDashboardInfo();
+    closeContactModal();
+  }
+
+  function deleteContact(id) {
+    const contact = state.contacts.find(c => c.id === id);
+    if (!contact) return;
+    if (!confirm(`Remove ${contact.name} from your emergency contacts?`)) return;
+    state.contacts = state.contacts.filter(c => c.id !== id);
+    saveJSON(STORAGE_KEYS.CONTACTS, state.contacts);
+    renderContacts();
+    renderDashboardInfo();
+    toast(`${contact.name} removed.`, 'info', 'trash-2');
+    logActivity(`Removed guardian ${contact.name}`, 'trash-2');
+  }
+
+  function initContactsUI() {
+    document.getElementById('openContactModalBtn').addEventListener('click', () => openContactModal());
+    document.getElementById('closeContactModalBtn').addEventListener('click', closeContactModal);
+    document.getElementById('cancelContactBtn').addEventListener('click', closeContactModal);
+    document.getElementById('contactForm').addEventListener('submit', saveContactFromForm);
+    document.getElementById('contactModal').addEventListener('click', (e) => {
+      if (e.target.id === 'contactModal') closeContactModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeContactModal();
+    });
+  }
+
+  /* ----------------------------------------------------
+     FASHION CATALOG (static demo data)
+  ---------------------------------------------------- */
+  // Catalog images correspond to the product renders, mapped in
+  // numbering order (image 1 -> item 1, image 2 -> item 2, etc).
+  const CATALOG_ITEMS = [
+    { name: 'Étoile Necklace', style: 'Minimalist Pendant', image: 'assets/catalog/catalog-1.png',
+      desc: 'A teardrop charm in brushed gold that houses the sensor module — everyday elegance with a hidden SOS trigger.' },
+    { name: 'Noir Choker', style: 'Statement Choker', image: 'assets/catalog/catalog-2.png',
+      desc: 'A matte black ceramic disc that doubles as a discreet long-press emergency button.' },
+    { name: 'Lumière Brooch', style: 'Vintage Brooch', image: 'assets/catalog/catalog-3.png',
+      desc: 'An art-deco inspired brooch with the alert module concealed behind a rotating petal clasp.' },
+    { name: 'Bracelet Charm', style: 'Layered Bracelet', image: 'assets/catalog/catalog-4.png',
+      desc: 'A small charm that clips onto any bracelet stack, vibrating discreetly when an alert is sent.' },
+    { name: 'Solstice Keychain', style: 'Everyday Carry', image: 'assets/catalog/catalog-5.png',
+      desc: 'A pocket-friendly variant for those who prefer carrying their safety device rather than wearing it.' },
+    { name: 'Velour Ribbon Choker', style: 'Soft Statement', image: 'assets/catalog/catalog-6.png',
+      desc: 'A velvet ribbon choker with a hidden gold disc module — soft texture, sharp protection.' }
+  ];
+
+  function renderCatalog() {
+    const grid = document.getElementById('catalogGrid');
+    grid.innerHTML = CATALOG_ITEMS.map(item => `
+      <div class="glass-card p-5 catalog-card">
+        <div class="catalog-image">
+          <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}" loading="lazy" class="catalog-img">
+        </div>
+        <span class="text-[10px] uppercase tracking-wider text-gold-400/80">${escapeHtml(item.style)}</span>
+        <h3 class="font-display text-xl font-bold text-white mt-1 mb-2">${escapeHtml(item.name)}</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">${escapeHtml(item.desc)}</p>
+      </div>
+    `).join('');
+
+    // If an image file is missing, hide it instead of showing a broken icon.
+    grid.querySelectorAll('.catalog-img').forEach(img => {
+      img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+    });
+    refreshIcons();
+  }
+
+  /* ----------------------------------------------------
+     SETTINGS
+  ---------------------------------------------------- */
+  function renderSettingsForm() {
+    document.getElementById('settingName').value = state.settings.name || '';
+    document.getElementById('settingDeviceName').value = state.settings.deviceName || '';
+    document.getElementById('settingAutoShare').checked = !!state.settings.autoShare;
+    document.getElementById('settingSound').checked = !!state.settings.sound;
+  }
+
+  function initSettingsUI() {
+    document.getElementById('settingsForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      state.settings.name = document.getElementById('settingName').value.trim() || 'Juan';
+      state.settings.deviceName = document.getElementById('settingDeviceName').value.trim() || 'Tracelet Pendant';
+      state.settings.autoShare = document.getElementById('settingAutoShare').checked;
+      state.settings.sound = document.getElementById('settingSound').checked;
+      saveJSON(STORAGE_KEYS.SETTINGS, state.settings);
+      renderDashboardInfo();
+      toast('Settings saved.', 'success', 'check-circle-2');
+      logActivity('Profile settings updated', 'settings');
+    });
+
+    document.getElementById('resetDataBtn').addEventListener('click', () => {
+      if (!confirm('This will erase all contacts, activity, and settings stored in this browser. Continue?')) return;
+      Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+      Object.values(LEGACY_KEYS).forEach(key => localStorage.removeItem(key));
+      toast('All local data has been reset.', 'info', 'trash-2');
+      setTimeout(() => location.reload(), 800);
+    });
+  }
+
+  /* ----------------------------------------------------
+     QUICK ACTIONS
+  ---------------------------------------------------- */
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return Promise.reject(new Error('Clipboard unavailable'));
+  }
+
+  function initQuickActions() {
+    document.querySelectorAll('.quick-action').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        switch (action) {
+          case 'share-location': {
+            const { lat, lng } = state.currentLocation;
+            const link = `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
+            copyToClipboard(link)
+              .then(() => toast('Location link copied — ready to share with your guardians.', 'success', 'share-2'))
+              .catch(() => toast('Location link ready: ' + link, 'info', 'share-2'));
+            logActivity('Shared current location', 'share-2');
+            break;
+          }
+          case 'check-in':
+            toast('Safe check-in sent to your guardians.', 'success', 'check-circle-2');
+            logActivity('Sent a safe check-in', 'check-circle-2');
+            break;
+          case 'goto-contacts':
+            switchTab('contacts');
+            break;
+          case 'goto-map':
+            switchTab('map');
+            break;
+        }
+      });
+    });
+  }
+
+  /* ----------------------------------------------------
+     SOS BUTTON BINDINGS
+  ---------------------------------------------------- */
+  function initSosUI() {
+    document.getElementById('sosTriggerBtn').addEventListener('click', triggerSos);
+    document.getElementById('cancelSosBtn').addEventListener('click', cancelSos);
+    document.getElementById('useRealGpsBtn').addEventListener('click', useRealGps);
+    document.getElementById('simulateMoveBtn').addEventListener('click', simulateMovement);
+  }
+
+  /* ----------------------------------------------------
+     INIT
+  ---------------------------------------------------- */
+  function init() {
+    refreshIcons();
+    initTabs();
+    initContactsUI();
+    initSettingsUI();
+    initQuickActions();
+    initSosUI();
+
+    startClock();
+    renderDashboardInfo();
+    renderContacts();
+    renderCatalog();
+    renderSettingsForm();
+    renderActivity();
+    simulateBatteryDrain();
+
+    initMap();
+
+    if (!state.contacts.length && !state.activity.length) {
+      logActivity('Welcome to Tracelet — add your first guardian to get started', 'sparkles');
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
