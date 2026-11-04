@@ -1,5 +1,5 @@
 /* =========================================================
-   AURELIA — Smart Safety Pendant Companion App
+   TRACELET — Smart Safety Pendant Companion App
    Pure client-side logic. No backend. Everything persists
    to localStorage so it survives a page refresh.
    ========================================================= */
@@ -11,6 +11,14 @@
      STORAGE KEYS & DEFAULTS
   ---------------------------------------------------- */
   const STORAGE_KEYS = {
+    CONTACTS: 'tracelet_contacts',
+    SETTINGS: 'tracelet_settings',
+    ACTIVITY: 'tracelet_activity',
+    LOCATION: 'tracelet_last_location'
+  };
+
+  // Old keys from the "aurelia" version — migrated automatically so no data is lost.
+  const LEGACY_KEYS = {
     CONTACTS: 'aurelia_contacts',
     SETTINGS: 'aurelia_settings',
     ACTIVITY: 'aurelia_activity',
@@ -29,26 +37,12 @@
   const MOCK_ORIGIN = { lat: 14.5547, lng: 121.0244 };
 
   /* ----------------------------------------------------
-     STATE
-  ---------------------------------------------------- */
-  const state = {
-    settings: loadJSON(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS),
-    contacts: loadJSON(STORAGE_KEYS.CONTACTS, []),
-    activity: loadJSON(STORAGE_KEYS.ACTIVITY, []),
-    currentLocation: loadJSON(STORAGE_KEYS.LOCATION, MOCK_ORIGIN),
-    map: null,
-    marker: null,
-    accuracyCircle: null,
-    sosActive: false,
-    simInterval: null
-  };
-
-  /* ----------------------------------------------------
      UTILITIES
   ---------------------------------------------------- */
-  function loadJSON(key, fallback) {
+  function loadJSON(key, fallback, legacyKey = null) {
     try {
-      const raw = localStorage.getItem(key);
+      let raw = localStorage.getItem(key);
+      if (!raw && legacyKey) raw = localStorage.getItem(legacyKey);
       return raw ? JSON.parse(raw) : fallback;
     } catch (e) {
       console.warn('Failed to parse localStorage key', key, e);
@@ -87,6 +81,21 @@
   }
 
   /* ----------------------------------------------------
+     STATE
+  ---------------------------------------------------- */
+  const state = {
+    settings: { ...DEFAULT_SETTINGS, ...loadJSON(STORAGE_KEYS.SETTINGS, {}, LEGACY_KEYS.SETTINGS) },
+    contacts: loadJSON(STORAGE_KEYS.CONTACTS, [], LEGACY_KEYS.CONTACTS),
+    activity: loadJSON(STORAGE_KEYS.ACTIVITY, [], LEGACY_KEYS.ACTIVITY),
+    currentLocation: loadJSON(STORAGE_KEYS.LOCATION, MOCK_ORIGIN, LEGACY_KEYS.LOCATION),
+    map: null,
+    marker: null,
+    accuracyCircle: null,
+    sosActive: false,
+    simInterval: null
+  };
+
+  /* ----------------------------------------------------
      TOAST NOTIFICATIONS
   ---------------------------------------------------- */
   function toast(message, type = 'info', icon = 'info') {
@@ -122,9 +131,9 @@
     }
     list.innerHTML = state.activity.map(item => `
       <li class="flex items-center gap-2.5">
-        <i data-lucide="${item.icon}" class="w-3.5 h-3.5 text-gold-400 flex-shrink-0"></i>
+        <i data-lucide="${escapeHtml(item.icon)}" class="w-3.5 h-3.5 text-gold-400 flex-shrink-0"></i>
         <span class="flex-1">${escapeHtml(item.text)}</span>
-        <span class="text-xs text-slate-500">${item.time}</span>
+        <span class="text-xs text-slate-500">${escapeHtml(item.time)}</span>
       </li>
     `).join('');
     refreshIcons();
@@ -193,16 +202,58 @@
   }
 
   /* ----------------------------------------------------
-     GPS / MAP
+     GPS / MAP  (Leaflet + free CARTO dark tiles, OSM fallback)
   ---------------------------------------------------- */
+  const TILE_SOURCES = [
+    {
+      // Dark style that matches the night theme (no API key required)
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      options: {
+        subdomains: 'abcd',
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
+      }
+    },
+    {
+      // Fallback: standard OpenStreetMap tiles (no API key required)
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      options: {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+      }
+    }
+  ];
+
   function initMap() {
-    state.map = L.map('map', { zoomControl: true, attributionControl: true })
+    if (!window.L) {
+      console.error('Leaflet failed to load — map disabled.');
+      toast('Map library could not be loaded. Check your connection.', 'danger', 'alert-triangle');
+      updateLocationDisplays();
+      return;
+    }
+
+    state.map = L.map('map', { zoomControl: true, attributionControl: false })
       .setView([state.currentLocation.lat, state.currentLocation.lng], 15);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      maxZoom: 19
-    }).addTo(state.map);
+    // Keep the required tile credits, drop the "Leaflet" prefix.
+    L.control.attribution({ prefix: false }).addTo(state.map);
+
+    // Tile layer with automatic fallback if the primary source keeps failing.
+    let sourceIndex = 0;
+    let tileLayer = null;
+    const useSource = (i) => {
+      if (tileLayer) state.map.removeLayer(tileLayer);
+      tileLayer = L.tileLayer(TILE_SOURCES[i].url, TILE_SOURCES[i].options).addTo(state.map);
+      let errors = 0;
+      tileLayer.on('tileerror', () => {
+        errors++;
+        if (errors >= 5 && sourceIndex < TILE_SOURCES.length - 1) {
+          sourceIndex++;
+          useSource(sourceIndex);
+        }
+      });
+    };
+    useSource(sourceIndex);
 
     const goldIcon = L.divIcon({
       className: '',
@@ -254,7 +305,10 @@
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation(pos.coords.latitude, pos.coords.longitude);
-        document.getElementById('gpsAccuracyLabel').textContent = `±${Math.round(pos.coords.accuracy)}m`;
+        const accuracy = Math.round(pos.coords.accuracy);
+        document.getElementById('gpsAccuracyLabel').textContent = `±${accuracy}m`;
+        if (state.accuracyCircle) state.accuracyCircle.setRadius(pos.coords.accuracy);
+        if (state.map) state.map.setView([pos.coords.latitude, pos.coords.longitude], 16);
         toast('Live GPS location acquired.', 'success', 'check-circle-2');
         logActivity('Switched to real device GPS', 'locate-fixed');
       },
@@ -298,6 +352,7 @@
     logActivity('SOS triggered', 'shield-alert');
 
     const finishDispatch = (lat, lng) => {
+      if (!state.sosActive) return; // cancelled while locating
       setLocation(lat, lng);
       const coordText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
       document.getElementById('sosCoordsText').textContent = `Coordinates: ${coordText}`;
@@ -324,16 +379,19 @@
       return;
     }
 
+    const mapsLink = `https://maps.google.com/?q=${encodeURIComponent(coordText.replace(/\s/g, ''))}`;
     let i = 0;
     const sendNext = () => {
+      if (!state.sosActive) return; // stop if the alert was cancelled
       if (i >= state.contacts.length) {
         statusEl.textContent = `Alert sent to all ${state.contacts.length} guardian(s) with your live coordinates.`;
         return;
       }
       const contact = state.contacts[i];
-      const message = `SOS ALERT from ${state.settings.name}: I may be in danger. My current location is ${coordText}. https://maps.google.com/?q=${coordText}`;
+      const message = `SOS ALERT from ${state.settings.name}: I may be in danger. My current location is ${coordText}. ${mapsLink}`;
       statusEl.textContent = `Sending to ${contact.name} (${contact.phone})…`;
       setTimeout(() => {
+        if (!state.sosActive) return;
         logActivity(`Mock alert sent to ${contact.name}`, 'send');
         console.log('[MOCK SMS DISPATCH]', { to: contact.phone, message });
         i++;
@@ -346,7 +404,6 @@
   function cancelSos() {
     state.sosActive = false;
     document.getElementById('sosOverlay').classList.add('hidden');
-    if (state.simInterval) { clearInterval(state.simInterval); state.simInterval = null; }
     toast('SOS alert cancelled.', 'info', 'shield-off');
     logActivity('SOS alert cancelled', 'shield-off');
   }
@@ -388,9 +445,9 @@
     document.getElementById('contactsCountLabel').textContent = `${state.contacts.length} saved`;
 
     grid.innerHTML = state.contacts.map(c => `
-      <div class="glass-card p-5 contact-card" data-id="${c.id}">
+      <div class="glass-card p-5 contact-card" data-id="${escapeHtml(c.id)}">
         <div class="flex items-start gap-3">
-          <div class="contact-avatar">${initials(c.name)}</div>
+          <div class="contact-avatar">${escapeHtml(initials(c.name))}</div>
           <div>
             <p class="font-semibold text-white">${escapeHtml(c.name)}</p>
             <p class="text-sm text-slate-400">${escapeHtml(c.phone)}</p>
@@ -398,10 +455,10 @@
           </div>
         </div>
         <div class="flex flex-col gap-1.5">
-          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center edit-contact-btn" data-id="${c.id}" title="Edit">
+          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center edit-contact-btn" data-id="${escapeHtml(c.id)}" title="Edit">
             <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
           </button>
-          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center delete-contact-btn" data-id="${c.id}" title="Remove">
+          <button class="glass-btn w-8 h-8 rounded-full flex items-center justify-center delete-contact-btn" data-id="${escapeHtml(c.id)}" title="Remove">
             <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i>
           </button>
         </div>
@@ -458,6 +515,7 @@
 
     if (id) {
       const contact = state.contacts.find(c => c.id === id);
+      if (!contact) return;
       Object.assign(contact, { name, phone, relation });
       toast(`Updated ${name}.`, 'success', 'check-circle-2');
       logActivity(`Updated guardian ${name}`, 'pencil');
@@ -493,12 +551,15 @@
     document.getElementById('contactModal').addEventListener('click', (e) => {
       if (e.target.id === 'contactModal') closeContactModal();
     });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeContactModal();
+    });
   }
 
   /* ----------------------------------------------------
      FASHION CATALOG (static demo data)
   ---------------------------------------------------- */
-  // Catalog images correspond to the uploaded product renders, mapped in
+  // Catalog images correspond to the product renders, mapped in
   // numbering order (image 1 -> item 1, image 2 -> item 2, etc).
   const CATALOG_ITEMS = [
     { name: 'Étoile Necklace', style: 'Minimalist Pendant', image: 'assets/catalog/catalog-1.png',
@@ -520,13 +581,18 @@
     grid.innerHTML = CATALOG_ITEMS.map(item => `
       <div class="glass-card p-5 catalog-card">
         <div class="catalog-image">
-          <img src="${item.image}" alt="${escapeHtml(item.name)}" loading="lazy" class="catalog-img">
+          <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}" loading="lazy" class="catalog-img">
         </div>
         <span class="text-[10px] uppercase tracking-wider text-gold-400/80">${escapeHtml(item.style)}</span>
-        <h3 class="font-display text-xl font-700 text-white mt-1 mb-2">${escapeHtml(item.name)}</h3>
+        <h3 class="font-display text-xl font-bold text-white mt-1 mb-2">${escapeHtml(item.name)}</h3>
         <p class="text-sm text-slate-400 leading-relaxed">${escapeHtml(item.desc)}</p>
       </div>
     `).join('');
+
+    // If an image file is missing, hide it instead of showing a broken icon.
+    grid.querySelectorAll('.catalog-img').forEach(img => {
+      img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+    });
     refreshIcons();
   }
 
@@ -543,7 +609,7 @@
   function initSettingsUI() {
     document.getElementById('settingsForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      state.settings.name = document.getElementById('settingName').value.trim() || 'Juam';
+      state.settings.name = document.getElementById('settingName').value.trim() || 'Juan';
       state.settings.deviceName = document.getElementById('settingDeviceName').value.trim() || 'Tracelet Pendant';
       state.settings.autoShare = document.getElementById('settingAutoShare').checked;
       state.settings.sound = document.getElementById('settingSound').checked;
@@ -556,6 +622,7 @@
     document.getElementById('resetDataBtn').addEventListener('click', () => {
       if (!confirm('This will erase all contacts, activity, and settings stored in this browser. Continue?')) return;
       Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+      Object.values(LEGACY_KEYS).forEach(key => localStorage.removeItem(key));
       toast('All local data has been reset.', 'info', 'trash-2');
       setTimeout(() => location.reload(), 800);
     });
@@ -564,15 +631,27 @@
   /* ----------------------------------------------------
      QUICK ACTIONS
   ---------------------------------------------------- */
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return Promise.reject(new Error('Clipboard unavailable'));
+  }
+
   function initQuickActions() {
     document.querySelectorAll('.quick-action').forEach(btn => {
       btn.addEventListener('click', () => {
         const action = btn.dataset.action;
         switch (action) {
-          case 'share-location':
-            toast('Location link copied (simulated) — ready to share with your guardians.', 'success', 'share-2');
+          case 'share-location': {
+            const { lat, lng } = state.currentLocation;
+            const link = `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
+            copyToClipboard(link)
+              .then(() => toast('Location link copied — ready to share with your guardians.', 'success', 'share-2'))
+              .catch(() => toast('Location link ready: ' + link, 'info', 'share-2'));
             logActivity('Shared current location', 'share-2');
             break;
+          }
           case 'check-in':
             toast('Safe check-in sent to your guardians.', 'success', 'check-circle-2');
             logActivity('Sent a safe check-in', 'check-circle-2');
@@ -619,7 +698,7 @@
 
     initMap();
 
-    if (!state.contacts.length) {
+    if (!state.contacts.length && !state.activity.length) {
       logActivity('Welcome to Tracelet — add your first guardian to get started', 'sparkles');
     }
   }
